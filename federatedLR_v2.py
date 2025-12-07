@@ -1,10 +1,11 @@
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.feature_extraction.text import TfidfVectorizer, HashingVectorizer
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 
-from loadDataset import load_dataset
+from data_utils import load_dataset, split_preprocess_data_non_iid, split_preprocess_data_iid, visualize_distribution
 
 df_full, x, y = load_dataset()
 
@@ -18,18 +19,23 @@ print(f"Dati 'Pubblici' sul Server: {len(X_server_raw)}")
 print(f"Dati 'Privati' sui Client: {len(X_clients_raw)}")
 
 # Il server crea il vettorizzatore basandosi solo sui dati pubblici.
-
-server_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+server_vectorizer = TfidfVectorizer(max_features=2**12, stop_words='english')
 server_vectorizer.fit(X_server_raw) 
 
 print("Vocabolario costruito dal server.")
 #print("features vectorized", vectorizer.get_feature_names_out())
 print(f"Dimensione del vocabolario: {len(server_vectorizer.get_feature_names_out())}")
 
+hash_vectorizer = HashingVectorizer(
+    n_features=2**12, 
+    alternate_sign=False,  # Mantieni valori positivi come in BoW
+    norm='l2',              # Normalizzazione locale (simula parzialmente TF-IDF)
+    stop_words='english',
+    dtype=np.float32              
+)
 # Distribuzione ai Client e Preprocessing Locale
 
 NUM_CLIENTS = 10
-client_datasets = []
 
 X_clients_vals = X_clients_raw.values
 print("X_clients_vals", type(X_clients_vals))
@@ -44,30 +50,15 @@ X_train_fed, X_test_fed, y_train_fed, y_test_fed = train_test_split(
 print("X_train_fed", X_train_fed.shape)
 print("X_test_fed", X_test_fed.shape)
 
-indices = np.random.permutation(len(X_train_fed))
-chunk_size = len(X_train_fed) // NUM_CLIENTS
 
-for i in range(NUM_CLIENTS):
-    start = i * chunk_size
-    end = (i + 1) * chunk_size
-    idx = indices[start:end]
-    # Dati grezzi del client
-    client_text = X_train_fed[idx]
-    client_y = y_train_fed[idx]
-    
-    # Il client riceve vectorizer dal server e lo usa per trasformare i suoi dati.
-    client_X_vectorized = server_vectorizer.transform(client_text).toarray()
-    
-    client_datasets.append({
-        'x': client_X_vectorized,
-        'y': client_y
-    })
-
+client_datasets, stats = split_preprocess_data_iid(X_train_fed, y_train_fed, server_vectorizer, NUM_CLIENTS)
+#client_datasets, stats = split_preprocess_data_non_iid(X_train_fed, y_train_fed, server_vectorizer, NUM_CLIENTS, alpha=1.0)
 print(len(client_datasets))
 print(len(client_datasets[0]['x']))
 print(len(client_datasets[0]['y']))
 #print(client_datasets[0])
 
+visualize_distribution(stats)
 # vettorizzazione test set globale
 X_test_vectorized = server_vectorizer.transform(X_test_fed).toarray()
 y_test = y_test_fed
@@ -104,11 +95,17 @@ def train_fedavg(client_datasets, num_features, x_test_bias, y_test, rounds=50, 
     print("\n--- Inizio Training fedavg ---")
     for r in range(rounds):
         local_weights = []
+        total_samples = 0
         
         for i in range(NUM_CLIENTS):
             # Caricamento dati locali (già vettorizzati localmente) 
             x_local = client_datasets[i]['x']
             y_local = client_datasets[i]['y']
+
+            n_local = len(y_local)
+
+            if n_local == 0: continue # Salta client vuoti
+
             w_local = np.copy(global_w)
             x_local_bias = np.c_[np.ones((x_local.shape[0], 1)), x_local]
 
@@ -116,15 +113,20 @@ def train_fedavg(client_datasets, num_features, x_test_bias, y_test, rounds=50, 
             for _ in range(local_epochs):
                 predictions = sigmoid(np.dot(x_local_bias, w_local))
                 err = predictions - y_local
-                gradient = np.dot(x_local_bias.T, err) / len(y_local)
+                gradient = np.dot(x_local_bias.T, err) / n_local
                 #regolarizzazione L2
-                gradient[1:] += (lambda_reg / len(y_local)) * w_local[1:]
+                gradient[1:] += (lambda_reg / n_local) * w_local[1:]
                 w_local -= lr * (gradient)
 
-            local_weights.append(w_local)
+            local_weights.append((w_local, n_local))
+            total_samples += n_local
         
-        # Aggregazione
-        global_w = np.mean(local_weights, axis=0)
+        # Aggregazione pesata
+        if total_samples > 0:
+            weighted_weights = np.zeros_like(global_w)
+            for w, n in local_weights:
+                weighted_weights += w * n
+            global_w = weighted_weights / total_samples
         
         # Valutazione sul Server, con test set riservato
         test_preds = predict(x_test_bias, global_w)
@@ -141,6 +143,11 @@ def train_fedavg(client_datasets, num_features, x_test_bias, y_test, rounds=50, 
 def train_fed_admm(client_datasets, num_features, y_test, rounds=50, rho=1.0, local_epochs=5, lr=0.1):
     n_features = num_features + 1
     num_clients = len(client_datasets)
+
+    # Calcolo dei pesi per ogni client in base alla quantità di dati
+    client_samples = np.array([len(c['y']) for c in client_datasets])
+    total_samples = np.sum(client_samples)
+    client_weights = client_samples / total_samples
     
     # Variabili ADMM
     z = np.zeros(n_features)  # Variabile Globale (Consenso)
@@ -179,9 +186,12 @@ def train_fed_admm(client_datasets, num_features, y_test, rounds=50, rho=1.0, lo
             w[i] = w_local
             
         # 2. Global Update (z): Media delle variabili locali (consenso)
-        # Per standard ADMM: z = mean(w_i + u_i)
-        z_new = np.mean(w + u, axis=0)
-        
+        # media non pesata
+        #z_new = np.mean(w + u, axis=0)
+        #media pesata
+        local_update = w + u
+        z_new = np.average(local_update, axis=0, weights=client_weights)
+
         # Opzionale: Se volessimo feature selection (Lasso), qui applicheremmo Soft Thresholding
         z = z_new 
         
