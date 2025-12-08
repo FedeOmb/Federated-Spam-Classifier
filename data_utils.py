@@ -18,11 +18,11 @@ def load_dataset():
 
 def split_preprocess_data_iid(x_clients, y_clients, vectorizer, num_clients):
     client_datasets = []
+    stats = []
 
     indices = np.random.permutation(len(x_clients))
     chunk_size = len(x_clients) // num_clients
 
-    stats = []
     for i in range(num_clients):
         start = i * chunk_size
         end = (i + 1) * chunk_size
@@ -31,22 +31,24 @@ def split_preprocess_data_iid(x_clients, y_clients, vectorizer, num_clients):
         client_text = x_clients[idx]
         client_label = y_clients[idx]
         
-        # Il client riceve vectorizer dal server e lo usa per trasformare i suoi dati.
-        client_text_vectorized = vectorizer.transform(client_text).toarray()
+        if len(client_text) == 0:
+            client_text_vectorized = np.empty((0, len(vectorizer.get_feature_names_out())))
+        else:
+            client_text_vectorized = vectorizer.transform(client_text).toarray()
         
         client_datasets.append({
             'x': client_text_vectorized,
             'y': client_label
         })
 
-        # Indici delle classi
+        # statistiche dati
         index_clean = np.where(client_label == 0)
         index_spam = np.where(client_label == 1)
         stats.append({
-            "Client": f"C{i}",
-            "Ham": len(index_clean),
-            "Spam": len(index_spam),
-            "Total": len(client_text)
+            "client": f"C{i}",
+            "clean": len(index_clean),
+            "spam": len(index_spam),
+            "total": len(client_text)
         })
     return client_datasets, stats
 
@@ -103,36 +105,35 @@ def split_preprocess_data_non_iid(x_clients, y_clients, vectorizer, num_clients,
             'y': client_label
         })
         
+        # statistiche dati
         stats.append({
-            "Client": f"C{i}",
-            "Ham": len(curr_index_clean),
-            "Spam": len(curr_index_spam),
-            "Total": len(client_text)
+            "client": f"C{i}",
+            "clean": len(curr_index_clean),
+            "spam": len(curr_index_spam),
+            "total": len(client_text)
         })
 
     return client_datasets, stats
 
-def visualize_distribution(stats):
-    """Crea un grafico per mostrare lo sbilanciamento."""
+def visualize_data_distribution(stats):
     if not stats: return
-    clients = [s["Client"] for s in stats]
-    hams = [s["Ham"] for s in stats]
-    spams = [s["Spam"] for s in stats]
-    totals = [s["Total"] for s in stats]
+    clients = [s["client"] for s in stats]
+    cleans = [s["clean"] for s in stats]
+    spams = [s["spam"] for s in stats]
+    totals = [s["total"] for s in stats]
     
     x = np.arange(len(clients))
     width = 0.35
     
     fig, ax = plt.subplots(figsize=(10, 5))
-    rects1 = ax.bar(x - width/2, hams, width, label='Ham', color='skyblue')
+    rects1 = ax.bar(x - width/2, cleans, width, label='Clean', color='skyblue')
     rects2 = ax.bar(x + width/2, spams, width, label='Spam', color='orange')
     
-    # Aggiungi etichetta del totale sopra le barre
     for i, v in enumerate(totals):
         ax.text(i, v + 5, str(v), ha='center', fontweight='bold')
     
     ax.set_ylabel('Quantità Dati')
-    ax.set_title('Distribuzione Non-IID (Quantità + Classi)')
+    ax.set_title('Distribuzione per classe tra i client')
     ax.set_xticks(x)
     ax.set_xticklabels(clients)
     ax.legend()

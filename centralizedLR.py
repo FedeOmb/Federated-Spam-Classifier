@@ -10,7 +10,7 @@ from logisticRegression import LogisticRegression
 from sklearn.linear_model import LogisticRegression as SklearnLogisticRegression
 import gensim.downloader as api
 
-from loadDataset import load_dataset
+from data_utils import load_dataset
 # Funzione Sigmoide
 def sigmoid(z):
     return 1 / (1 + np.exp(-z))
@@ -124,7 +124,7 @@ y = df_full['spam'].values
 x_raw = df_full['message']
 X_train, X_test, y_train, y_test = train_test_split(x_raw, y, test_size=0.2, random_state=42, stratify=y)
 
-vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+vectorizer = TfidfVectorizer(max_features=2**12, stop_words='english')
 vectorizer.fit(X_train)
 X_train_vec = vectorizer.transform(X_train).toarray()
 X_test_vec = vectorizer.transform(X_test).toarray()
