@@ -44,7 +44,7 @@ def evaluate_model(x, y, w, prefix=''):
         f'{prefix}loss': log_loss(y, pred_prob) 
     }
 
-def train_fedavg(client_datasets, x_test, y_test, rounds=50, local_epochs=10, lr=0.5, lambda_reg=0.01):
+def train_fedavg(client_datasets, x_test, y_test, rounds=50, local_epochs=10, lr=0.5, lambda_reg=0.01, batch_size=128):
 
     num_features = x_test.shape[1]
     num_features_b = num_features + 1 
@@ -76,15 +76,33 @@ def train_fedavg(client_datasets, x_test, y_test, rounds=50, local_epochs=10, lr
             if n_local == 0: continue # Salta client vuoti
 
             w_local = np.copy(global_w)
+            indices = np.arange(n_local)
 
             # Training Locale
             for j in range(local_epochs):
-                predictions = sigmoid(np.dot(x_local, w_local))
-                err = predictions - y_local
-                gradient = np.dot(x_local.T, err) / n_local
-                #regolarizzazione L2
-                gradient[1:] += (lambda_reg / n_local) * w_local[1:]
-                w_local -= lr * (gradient)
+
+                if batch_size and batch_size < n_local:
+                    np.random.shuffle(indices) # Importante per SGD 
+
+                    for start_idx in range(0, n_local, batch_size):
+                        batch_idx = indices[start_idx : start_idx + batch_size]
+                        x_batch = x_local[batch_idx]
+                        y_batch = y_local[batch_idx]
+                        curr_batch_size = len(y_batch)
+
+                        predictions = sigmoid(np.dot(x_batch, w_local))
+                        err = predictions - y_batch
+                        gradient = np.dot(x_batch.T, err) / curr_batch_size
+                        #regolarizzazione L2
+                        gradient[1:] += (lambda_reg / n_local) * w_local[1:]
+                        w_local -= lr * (gradient)
+                else:
+                    predictions = sigmoid(np.dot(x_local, w_local))
+                    err = predictions - y_local
+                    gradient = np.dot(x_local.T, err) / n_local
+                    
+                    gradient[1:] += (lambda_reg / n_local) * w_local[1:]
+                    w_local -= lr * gradient
 
             local_weights.append((w_local, n_local))
             total_samples += n_local
@@ -108,8 +126,7 @@ def train_fedavg(client_datasets, x_test, y_test, rounds=50, local_epochs=10, lr
     return global_w, history
 
 
-
-def train_fed_prox(client_datasets, x_test, y_test, rounds=50, mu=0.1, local_epochs=5, lr=0.01):
+def train_fed_prox(client_datasets, x_test, y_test, rounds=50, mu=0.1, local_epochs=5, lr=0.01, lambda_reg=0.01, batch_size=128):
     #mu: Parametro prossimale (controlla quanto w locale deve stare vicino a w globale)
     
     # Preprocessing
@@ -130,7 +147,6 @@ def train_fed_prox(client_datasets, x_test, y_test, rounds=50, mu=0.1, local_epo
     history = []
 
     print(f"--- Start Federated Learning using FedProx algorithm ---")
-
     for r in range(rounds):
         local_weights = []
         total_samples = 0
@@ -145,23 +161,44 @@ def train_fed_prox(client_datasets, x_test, y_test, rounds=50, mu=0.1, local_epo
 
             # Inizializza col modello globale corrente
             w_local = np.copy(global_w)
-            
+            indices = np.arange(n_local)
+
             for j in range(local_epochs):
-                predictions = sigmoid(np.dot(x_local, w_local))
-                err = predictions - y_local
-                # Gradiente Loss
-                grad_loss = np.dot(x_local.T, err) / len(y_local)
-                # Gradiente Proximal
-                grad_prox = mu * (w_local - global_w)
-                total_grad = grad_loss + grad_prox
+
+                if batch_size and batch_size < n_local:
+                    np.random.shuffle(indices)                
+                    for start_idx in range(0, n_local, batch_size):
+                        batch_idx = indices[start_idx : start_idx + batch_size]
+                        x_batch = x_local[batch_idx]
+                        y_batch = y_local[batch_idx]
+                        curr_batch_size = len(y_batch)
+                        predictions = sigmoid(np.dot(x_batch, w_local))
+                        err = predictions - y_batch
+                        # Gradiente Loss
+                        grad_loss = np.dot(x_batch.T, err) / curr_batch_size
+                        # Gradiente L2 Regularization
+                        grad_l2 = (lambda_reg / n_local) * w_local
+                        grad_l2[0] = 0 
+                        # Gradiente Proximal Term
+                        grad_prox = mu * (w_local - global_w)
+                        total_grad = grad_loss + grad_l2 + grad_prox
+                        # Update pesi
+                        w_local -= lr * total_grad                        
+                else:
+                    predictions = sigmoid(np.dot(x_local, w_local))
+                    err = predictions - y_local
+                    grad_loss = np.dot(x_local.T, err) / n_local
+                    grad_l2 = (lambda_reg / n_local) * w_local
+                    grad_l2[0] = 0
+                    grad_prox = mu * (w_local - global_w)
         
-                # Update
-                w_local -= lr * total_grad
+                    total_grad = grad_loss + grad_l2 + grad_prox
+                
+                    w_local -= lr * total_grad
             
             local_weights.append((w_local, n_local))
             total_samples += n_local
 
-        # --- Global Aggregation (FedAvg standard) ---
         # Aggregazione pesata
         if total_samples > 0:
             weighted_weights = np.zeros_like(global_w)
@@ -169,7 +206,7 @@ def train_fed_prox(client_datasets, x_test, y_test, rounds=50, mu=0.1, local_epo
                 weighted_weights += w * n
             global_w = weighted_weights / total_samples
 
-        # --- Monitoraggio ---
+        # Monitoraggio
         metrics = evaluate_model(x_test_bias, y_test, global_w)
         #print(metrics)
         if r % 5 == 0:
@@ -179,9 +216,7 @@ def train_fed_prox(client_datasets, x_test, y_test, rounds=50, mu=0.1, local_epo
 
     return global_w, history
 
-
-
-def train_fed_admm(client_datasets, x_test, y_test, rounds=50, rho=1.0, local_epochs=5, lr=0.1, lambda_l2=0.01, lambda_l1=0.01):
+def train_fed_admm(client_datasets, x_test, y_test, rounds=50, rho=1.0, local_epochs=5, lr=0.1, lambda_l2=0.01, lambda_l1=0.01, batch_size=128):
     num_features = x_test.shape[1]
     num_features_b = num_features + 1 
     num_clients = len(client_datasets)
@@ -214,21 +249,48 @@ def train_fed_admm(client_datasets, x_test, y_test, rounds=50, rho=1.0, local_ep
         for i in range(num_clients):
             x_local = client_datasets_bias[i]['x']
             y_local = client_datasets_bias[i]['y']
+            n_local = len(y_local)
+            
+            if n_local == 0: continue
+            indices = np.arange(n_local)
+
             w_local = np.copy(w[i])
             
-            for _ in range(local_epochs):
-                predictions = sigmoid(np.dot(x_local, w_local))
-                err = predictions - y_local
-                #gradiente della loss
-                grad_loss = np.dot(x_local.T, err) / len(y_local)
-                # gradiente regolarizzazione L2
-                grad_l2 = lambda_l2 * w_local
-                # Gradiente del termine Augmented Lagrangian
-                grad_penalty = rho * (w_local - z + u[i])
-                total_grad = grad_loss + grad_l2 + grad_penalty
-                total_grad = np.clip(total_grad, -5.0, 5.0)
-                # Update
-                w_local -= lr * total_grad
+            for j in range(local_epochs):
+
+                if batch_size and batch_size < n_local:
+                    np.random.shuffle(indices)
+                    
+                    for start_idx in range(0, n_local, batch_size):
+                        batch_idx = indices[start_idx : start_idx + batch_size]
+                        x_batch = x_local[batch_idx]
+                        y_batch = y_local[batch_idx]
+                        curr_batch_size = len(y_batch)
+
+                        predictions = sigmoid(np.dot(x_batch, w_local))
+                        err = predictions - y_batch
+                        # Gradiente Loss
+                        grad_loss = np.dot(x_batch.T, err) / curr_batch_size
+                        # Gradiente L2 Scalato su n_local
+                        grad_l2 = (lambda_l2 / n_local) * w_local
+                        grad_l2[0] = 0 
+                        # Gradiente del termine Augmented Lagrangian
+                        grad_penalty = rho * (w_local - z + u[i])
+                        total_grad = grad_loss + grad_l2 + grad_penalty
+                        total_grad = np.clip(total_grad, -5.0, 5.0)
+                        # Update                        
+                        w_local -= lr * total_grad
+                else:
+                    predictions = sigmoid(np.dot(x_local, w_local))
+                    err = predictions - y_local
+                    grad_loss = np.dot(x_local.T, err) / n_local
+                    grad_l2 = (lambda_l2 / n_local) * w_local
+                    grad_l2[0] = 0
+                    grad_penalty = rho * (w_local - z + u[i])
+                    total_grad = grad_loss + grad_l2 + grad_penalty
+                    total_grad = np.clip(total_grad, -5.0, 5.0)
+                    # Update
+                    w_local -= lr * total_grad
             
             w[i] = w_local
             
