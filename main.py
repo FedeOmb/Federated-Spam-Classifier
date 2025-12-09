@@ -8,7 +8,8 @@ from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_sc
 
 from data_utils import load_dataset, split_preprocess_data_non_iid, split_preprocess_data_iid, visualize_data_distribution
 from federatedLR_v2 import train_fedavg, train_fed_prox, train_fed_admm, add_bias
-from centralizedLR import train_centralized
+from centralizedLR import train_centralized, train_centralized_sklearn
+
 NUM_CLIENTS = 10
 
 df_full, x, y = load_dataset()
@@ -66,8 +67,6 @@ y_test_central = y_test_fed
 print(f"Dimensione del vocabolario: {len(full_train_vectorizer.get_feature_names_out())}")
 print(f"Dimensione features: {x_test_central.shape[1]}")
 
-train_centralized(x_train_central, y_train_fed, x_test_central, y_test_fed, epochs=1000, lambda_reg=0.001, learning_rate=3.0)
-
 # Distribuzione ai Client e Preprocessing Locale
 #client_datasets, stats = split_preprocess_data_iid(x_train_fed, y_train_fed, server_vectorizer, NUM_CLIENTS)
 client_datasets, stats = split_preprocess_data_non_iid(x_train_fed, y_train_fed, server_vectorizer, NUM_CLIENTS, alpha=1.0)
@@ -121,7 +120,7 @@ def run_grid_search(configs, data, x_valid, y_valid):
         
         print(f"[{idx+1}/{len(configs)}] {algo} -> {params}")
         
-        weights, history = train_fed_prox(data, x_valid, y_valid, **params)
+        weights, history = train_fedavg(data, x_valid, y_valid, **params)
 
         for entry in history:
             entry['algorithm'] = algo
@@ -132,8 +131,10 @@ def run_grid_search(configs, data, x_valid, y_valid):
     results_df = pd.DataFrame(all_histories)
     return results_df
 
+#central_weights, central_history = train_centralized(x_train_central, y_train_central, x_valid_central, y_valid_central, epochs=500, lambda_reg=0.0001, learning_rate=5.0)
+#train_centralized_sklearn(x_train_central, y_train_central, x_valid_central, y_valid_central, epochs=500, lambda_reg=0.0001, lr=0.5)
 
-results_df = run_grid_search(configs_fedprox2, client_datasets, x_valid_vectorized, y_valid)
+results_df = run_grid_search(configs_fedavg, client_datasets, x_valid_vectorized, y_valid_fed)
 print(results_df.head())
 
 plt.figure(figsize=(14, 6))
