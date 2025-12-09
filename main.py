@@ -85,20 +85,34 @@ print(f"Dati distribuiti e vettorizzati su {NUM_CLIENTS} client.")
 print(f"Dimensione features: {x_test_vectorized.shape[1]}")
 
 configs_fedavg1 = [
-    {'rounds': 100, 'local_epochs': 10, 'lr': 0.5, 'lambda_reg': 0.01},
-    {'rounds': 100, 'local_epochs': 10, 'lr': 1.0, 'lambda_reg': 0.01},
-    {'rounds': 100, 'local_epochs': 10, 'lr': 2.0, 'lambda_reg': 0.01},
-    {'rounds': 100, 'local_epochs': 10, 'lr': 3.0, 'lambda_reg': 0.01},
+    {'rounds': 100, 'local_epochs': 10, 'lr': 0.5, 'lambda_reg': 0.001},
+    {'rounds': 100, 'local_epochs': 10, 'lr': 1.0, 'lambda_reg': 0.001},
+    {'rounds': 100, 'local_epochs': 10, 'lr': 2.0, 'lambda_reg': 0.001},
+    {'rounds': 100, 'local_epochs': 10, 'lr': 3.0, 'lambda_reg': 0.001}, #best
 ]
 
 configs_fedavg2 = [
     {'rounds': 100, 'local_epochs': 10, 'lr': 1.0, 'lambda_reg': 0.01},
     {'rounds': 100, 'local_epochs': 10, 'lr': 1.0, 'lambda_reg': 0.001},
-    {'rounds': 100, 'local_epochs': 10, 'lr': 1.0, 'lambda_reg': 0.0001},
+    {'rounds': 100, 'local_epochs': 10, 'lr': 1.0, 'lambda_reg': 0.0001}, #best
     {'rounds': 100, 'local_epochs': 10, 'lr': 1.0, 'lambda_reg': 0.1},
 ]
+configs_fedavg3 = [
+    {'rounds': 100, 'local_epochs': 5, 'lr': 3.0, 'lambda_reg': 0.001},
+    {'rounds': 100, 'local_epochs': 10, 'lr': 3.0, 'lambda_reg': 0.001},
+    {'rounds': 100, 'local_epochs': 20, 'lr': 3.0, 'lambda_reg': 0.001},
+    {'rounds': 100, 'local_epochs': 30, 'lr': 3.0, 'lambda_reg': 0.001}, #best
+]
 
-configs_fedprox = [
+configs_fedavg4 = [
+    {'rounds': 100, 'local_epochs': 20, 'lr': 3.0, 'lambda_reg': 0.001, 'batch_size': 32},
+    {'rounds': 100, 'local_epochs': 20, 'lr': 3.0, 'lambda_reg': 0.001, 'batch_size': 64},
+    {'rounds': 100, 'local_epochs': 20, 'lr': 3.0, 'lambda_reg': 0.001, 'batch_size': 128},
+    {'rounds': 100, 'local_epochs': 20, 'lr': 3.0, 'lambda_reg': 0.001, 'batch_size': 16}, #best
+]
+
+
+configs_fedprox1 = [
     {'rounds': 200, 'local_epochs': 10, 'lr': 0.1, 'mu': 0.01},
     {'rounds': 200, 'local_epochs': 10, 'lr': 0.5, 'mu': 0.01},
     {'rounds': 200, 'local_epochs': 10, 'lr': 1.0, 'mu': 0.01},
@@ -141,7 +155,7 @@ def run_grid_search(configs, data, x_valid, y_valid):
 #central_weights, central_history = train_centralized(x_train_central, y_train_central, x_valid_central, y_valid_central, epochs=500, lambda_reg=0.0001, learning_rate=5.0)
 #train_centralized_sklearn(x_train_full_vec, y_train_fed, x_valid_vectorized, y_valid_fed, epochs=500, lambda_reg=0.0001, lr=1.2)
 
-results_df = run_grid_search(configs_fedavg2, client_datasets, x_valid_vectorized, y_valid_fed)
+results_df = run_grid_search(configs_fedavg4, client_datasets, x_valid_vectorized, y_valid_fed)
 print(results_df.head())
 
 plt.figure(figsize=(14, 6))
