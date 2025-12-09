@@ -101,6 +101,13 @@ def train_centralized_sklearn(X_train, y_train, X_test, y_test, epochs: int = 30
     print(f"  F1-Score:  {f1:.4f}")
     print(classification_report(y_test, y_pred))
 
+    return {
+        'accuracy': acc,
+        'f1': f1,
+        'precision': prec,
+        'recall': rec,
+    }
+
 
 def message_to_vector(message, model, dim):
     """
