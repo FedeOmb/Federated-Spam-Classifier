@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+import ast
 
 def load_dataset():
     df = pd.read_csv("./dataset/SMS-spam-dataset-uci.csv", encoding="latin_1")
@@ -140,3 +142,97 @@ def visualize_data_distribution(stats):
     
     plt.tight_layout()
     plt.show()
+
+def plot_metrics_per_rounds(results_df):
+    palette = sns.color_palette("tab20", n_colors=results_df['params_str'].nunique())
+
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(data=results_df, x='round', y='f1', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
+    plt.title('F1')
+    plt.xlabel('Round')
+    plt.ylabel('F1')
+    plt.grid(True, alpha=0.3)
+    plt.legend(title="parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.show(block=False)
+
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(data=results_df, x='round', y='recall', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
+    plt.title('Recall')
+    plt.xlabel('Round')
+    plt.ylabel('Recall')
+    plt.grid(True, alpha=0.3)
+    plt.legend(title="Parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.show(block=False)
+
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(data=results_df, x='round', y='precision', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
+    plt.title('Precision')
+    plt.xlabel('Round')
+    plt.ylabel('Precision')
+    plt.grid(True, alpha=0.3)
+    plt.legend(title="Parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.show(block=False)
+
+    plt.figure(figsize=(8, 5))
+    sns.lineplot(data=results_df, x='round', y='loss', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
+    plt.title('Validation Loss')
+    plt.xlabel('Round')
+    plt.ylabel('Loss')
+    plt.grid(True, alpha=0.3)
+    plt.legend(title="Parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.show(block=False)
+
+    plt.show()
+
+def plot_tuning_heatmap(res_df, algo_name, param_x, param_y=None, metric='f1'):
+    final_metrics = res_df.groupby([param_x, param_y])[metric].max().reset_index()
+
+    # Pivot per creare la matrice della heatmap
+    pivot_table = final_metrics.pivot(index=param_y, columns=param_x, values=metric)
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(pivot_table, annot=True, fmt=".3f", cmap="viridis", cbar_kws={'label': f'Max {metric.upper()}'})
+    plt.title(f"{algo_name} Tuning: {param_x} vs {param_y}")
+    plt.xlabel(f"Parameter: {param_x}")
+    plt.ylabel(f"Parameter: {param_y}")
+    plt.tight_layout()
+    plt.show()
+
+def extract_best_configs(results_df, metric='f1', average_last_n=5):
+    summary_data = []
+
+    grouped = results_df.groupby(['algorithm', 'params_str'])
+    
+    for (algo, params_str), group in grouped:
+        group = group.sort_values('round')
+        last_n_rounds = group.tail(average_last_n)
+        
+        # Calcola le medie delle metriche
+        avg_metrics = {
+            'algorithm': algo,
+            'params_raw': params_str,
+            'final_f1': last_n_rounds['f1'].mean(),
+            'final_acc': last_n_rounds['accuracy'].mean(),
+            'final_prec': last_n_rounds['precision'].mean(),
+            'final_rec': last_n_rounds['recall'].mean(),
+            'final_loss': last_n_rounds['loss'].mean(),
+            'std_f1': last_n_rounds['f1'].std()
+        }
+        
+        params_dict = ast.literal_eval(params_str)
+        avg_metrics.update(params_dict)
+
+        summary_data.append(avg_metrics)
+        
+    summary_df = pd.DataFrame(summary_data)
+
+    ascending = True if metric == 'loss' else False
+    target_col = f"final_{metric}" if f"final_{metric}" in summary_df.columns else metric
+    
+    summary_df = summary_df.sort_values(by=target_col, ascending=ascending).reset_index(drop=True)
+    
+    cols = ['algorithm', 'final_f1', 'final_acc', 'final_loss', 'final_prec', 'final_rec']
+    param_cols = [c for c in summary_df.columns if c not in cols]
+    final_cols = cols + param_cols
+    
+    return summary_df[final_cols]
