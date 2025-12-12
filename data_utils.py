@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import ast
+from federatedLR import train_fedavg, train_fed_prox, train_fed_admm, add_bias
 
 def load_dataset():
     df = pd.read_csv("./dataset/SMS-spam-dataset-uci.csv", encoding="latin_1")
@@ -59,7 +60,6 @@ def split_preprocess_data_non_iid(x_clients, y_clients, vectorizer, num_clients,
     
     rng = np.random.default_rng(100)
 
-    # Indici delle classi
     index_clean = np.where(y_clients == 0)[0]
     index_spam = np.where(y_clients == 1)[0]
     
@@ -71,7 +71,6 @@ def split_preprocess_data_non_iid(x_clients, y_clients, vectorizer, num_clients,
     num_clean_samples = (dist_clean * len(index_clean)).astype(int)
     num_spam_samples = (dist_spam * len(index_spam)).astype(int)
     
-    # Correzione arrotondamenti
     num_clean_samples[-1] += len(index_clean) - np.sum(num_clean_samples)
     num_spam_samples[-1] += len(index_spam) - np.sum(num_spam_samples)
     
@@ -117,87 +116,6 @@ def split_preprocess_data_non_iid(x_clients, y_clients, vectorizer, num_clients,
 
     return client_datasets, stats
 
-def visualize_data_distribution(stats):
-    if not stats: return
-    clients = [s["client"] for s in stats]
-    cleans = [s["clean"] for s in stats]
-    spams = [s["spam"] for s in stats]
-    totals = [s["total"] for s in stats]
-    
-    x = np.arange(len(clients))
-    width = 0.35
-    
-    fig, ax = plt.subplots(figsize=(10, 5))
-    rects1 = ax.bar(x - width/2, cleans, width, label='Clean', color='skyblue')
-    rects2 = ax.bar(x + width/2, spams, width, label='Spam', color='orange')
-    
-    for i, v in enumerate(totals):
-        ax.text(i, v + 5, str(v), ha='center', fontweight='bold')
-    
-    ax.set_ylabel('Quantità Dati')
-    ax.set_title('Distribuzione per classe tra i client')
-    ax.set_xticks(x)
-    ax.set_xticklabels(clients)
-    ax.legend()
-    
-    plt.tight_layout()
-    plt.show()
-
-def plot_metrics_per_rounds(results_df):
-    palette = sns.color_palette("tab20", n_colors=results_df['params_str'].nunique())
-
-    plt.figure(figsize=(8, 5))
-    sns.lineplot(data=results_df, x='round', y='f1', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
-    plt.title('F1')
-    plt.xlabel('Round')
-    plt.ylabel('F1')
-    plt.grid(True, alpha=0.3)
-    plt.legend(title="parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.show(block=False)
-
-    plt.figure(figsize=(8, 5))
-    sns.lineplot(data=results_df, x='round', y='recall', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
-    plt.title('Recall')
-    plt.xlabel('Round')
-    plt.ylabel('Recall')
-    plt.grid(True, alpha=0.3)
-    plt.legend(title="Parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.show(block=False)
-
-    plt.figure(figsize=(8, 5))
-    sns.lineplot(data=results_df, x='round', y='precision', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
-    plt.title('Precision')
-    plt.xlabel('Round')
-    plt.ylabel('Precision')
-    plt.grid(True, alpha=0.3)
-    plt.legend(title="Parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.show(block=False)
-
-    plt.figure(figsize=(8, 5))
-    sns.lineplot(data=results_df, x='round', y='loss', hue='params_str', linewidth=2, alpha=0.8, palette=palette)
-    plt.title('Validation Loss')
-    plt.xlabel('Round')
-    plt.ylabel('Loss')
-    plt.grid(True, alpha=0.3)
-    plt.legend(title="Parametri", bbox_to_anchor=(1.05, 1), loc='upper left')
-    plt.show(block=False)
-
-    plt.show()
-
-def plot_tuning_heatmap(res_df, algo_name, param_x, param_y=None, metric='f1'):
-    final_metrics = res_df.groupby([param_x, param_y])[metric].max().reset_index()
-
-    # Pivot per creare la matrice della heatmap
-    pivot_table = final_metrics.pivot(index=param_y, columns=param_x, values=metric)
-
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(pivot_table, annot=True, fmt=".3f", cmap="viridis", cbar_kws={'label': f'Max {metric.upper()}'})
-    plt.title(f"{algo_name} Tuning: {param_x} vs {param_y}")
-    plt.xlabel(f"Parameter: {param_x}")
-    plt.ylabel(f"Parameter: {param_y}")
-    plt.tight_layout()
-    plt.show()
-
 def extract_best_configs(results_df, metric='f1', average_last_n=5):
     summary_data = []
 
@@ -207,7 +125,6 @@ def extract_best_configs(results_df, metric='f1', average_last_n=5):
         group = group.sort_values('round')
         last_n_rounds = group.tail(average_last_n)
         
-        # Calcola le medie delle metriche
         avg_metrics = {
             'algorithm': algo,
             'params_raw': params_str,
@@ -236,3 +153,65 @@ def extract_best_configs(results_df, metric='f1', average_last_n=5):
     final_cols = cols + param_cols
     
     return summary_df[final_cols]
+
+def run_grid_search(algo, configs, data, x_valid, y_valid):
+    all_histories = []
+    print(f"Iniziando Grid Search su {len(configs)} configurazioni...")
+
+    for idx, conf in enumerate(configs):
+        params = {k:v for k,v in conf.items() }
+        
+        print(f"[{idx+1}/{len(configs)}] {algo} -> {params}")
+
+        if algo == 'fedavg':
+            weights, history = train_fedavg(data, x_valid, y_valid, rounds=100, batch_size=64, **params)
+        elif algo == 'fedprox':
+            weights, history = train_fed_prox(data, x_valid, y_valid, rounds=200, batch_size=64, lambda_reg=0.001, **params)
+        elif algo == 'fedadmm':
+            weights, history = train_fed_admm(data, x_valid, y_valid, rounds=100, batch_size=64, lambda_l2=0.001, **params)
+        else:
+            print("Algoritmo non riconosciuto")
+            continue
+
+        for entry in history:
+            entry['algorithm'] = algo
+            entry['params_str'] = str(params)
+        
+        all_histories.extend(history)
+
+    results_df = pd.DataFrame(all_histories)
+    return results_df
+
+def run_alpha_comparison(X_train_fed, y_train_fed, X_test_vec, y_test, vectorizer, best_configs):
+    
+    alphas = [100.0, 1.0, 0.5, 0.1]
+    results_history = []
+    
+    print("Test robustezza algoritmi sui diverse distribuzioni dei dati (IID vs Non-IID)")
+    
+    for alpha in alphas:
+        # Rigenera i dati distribuiti con il nuovo alpha
+        client_datasets, stats = split_preprocess_data_non_iid(
+            X_train_fed, y_train_fed, vectorizer, num_clients=10, alpha=alpha
+        )
+        #visualize_data_distribution(stats)
+        
+        for algo, params in best_configs.items():
+            print(f"Training {algo} with alpha={alpha} and params={params}")
+            p = params.copy()
+            
+            if algo == 'fedavg':
+                w, hist = train_fedavg(client_datasets, X_test_vec, y_test, **p)
+            elif algo == 'fedprox':
+                w, hist = train_fed_prox(client_datasets, X_test_vec, y_test, **p)
+            elif algo == 'fedadmm':
+                w, hist = train_fed_admm(client_datasets, X_test_vec, y_test, **p)
+            
+            # Arricchisci la history per il plotting
+            for entry in hist:
+                entry['algorithm'] = algo
+                entry['alpha'] = alpha
+            
+            results_history.extend(hist)
+            
+    return pd.DataFrame(results_history)
