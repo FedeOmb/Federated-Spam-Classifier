@@ -124,7 +124,6 @@ def plot_alpha_comparison(df_results):
         plt.title(f"Robustness Analysis alpha = {a}", fontsize=14, fontweight='bold')
         plt.xlabel("Rounds")
         plt.ylabel("Test F1-Score")
-        plt.ylim(0.5, 1.0) # Adatta in base ai tuoi risultati
         plt.grid(True, alpha=0.3)
         plt.legend(loc='lower right')
         plt.tight_layout()
